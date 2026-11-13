@@ -1,0 +1,16 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Only these email addresses can read or change the planner's data.
+    // Add or remove people here, then click Publish in Firebase.
+    function allowed() {
+      return request.auth != null
+        && request.auth.token.email.lower() in [
+          'you@example.com'
+        ];
+    }
+    match /{document=**} {
+      allow read, write: if allowed();
+    }
+  }
+}
