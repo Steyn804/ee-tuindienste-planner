@@ -6,6 +6,7 @@ service cloud.firestore {
     function allowed() {
       return request.auth != null
         && request.auth.token.email.lower() in [
+          // Real addresses are kept only in the Firebase console, not in this public repo.
           'you@example.com'
         ];
     }
