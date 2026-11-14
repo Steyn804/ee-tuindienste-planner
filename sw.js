@@ -1,6 +1,6 @@
 // Offline support. The app's own files are fetched fresh when online (so updates
 // show up straight away) and served from the cache when offline.
-const CACHE = 'ee-planner-v2';
+const CACHE = 'ee-planner-v3';
 const SHELL = ['./', 'index.html', 'config.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
 const CDN = ['www.gstatic.com', 'unpkg.com', 'fonts.googleapis.com', 'fonts.gstatic.com'];
 

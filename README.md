@@ -1,6 +1,6 @@
 # E&E Tuindienste · Day Planner
 
-Plan landscaping work: clients, a day/week/month calendar, the most efficient driving order for each day, routes in Google Maps, and printable PDFs.
+Plan landscaping work: clients, a day/week/month calendar, the most efficient driving order for each day, turn-by-turn navigation in Waze (one stop after the other), and printable PDFs.
 
 ## How it's put together
 | File | What it is |
@@ -25,4 +25,4 @@ Ask Claude for the change and say the repo is `ee-tuindienste-planner`. Claude e
 - **Computer (Chrome/Edge):** click the install icon at the right of the address bar.
 
 ## Maps
-Pin picking uses OpenStreetMap (© OpenStreetMap contributors) and Nominatim search. Routes open in Google Maps.
+Pin picking uses OpenStreetMap (© OpenStreetMap contributors) and Nominatim search. Navigation opens in Waze, one stop at a time (Waze links hold a single destination).

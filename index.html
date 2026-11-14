@@ -377,7 +377,7 @@ function openMapPicker(start,addr,onPick){
     else{map.setView(near?[near.lat,near.lng]:[53.4,-7.9],near?12:6);if(addr&&!isUrl(addr))search(addr,true);}
     map.on('click',function(e){$('mp-res').hidden=true;setPin(e.latlng.lat,e.latlng.lng);});
     setTimeout(function(){map.invalidateSize();},60);
-  }).catch(function(){$('mp-info').textContent='The map couldn’t load. Check the internet connection, or use the Google Maps option instead.';});
+  }).catch(function(){$('mp-info').textContent='The map couldn’t load. Check the internet connection, or type the coordinates into the pin box.';});
 }
 
 /* ---------- helpers ---------- */
@@ -420,7 +420,14 @@ function locOf(c){
   return '';
 }
 function baseLoc(){var s=state.settings;if(s.baseCoord)return s.baseCoord.lat+','+s.baseCoord.lng;return (s.base||'').trim()&&!isUrl(s.base)?s.base.trim():'';}
-function mapSearch(c){var q=locOf(c);if(!q&&isUrl(c.address))return c.address;return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(q||c.address||'');}
+function wazeLoc(co,addr,nav){
+  if(co)return 'https://waze.com/ul?ll='+co.lat+'%2C'+co.lng+(nav?'&navigate=yes':'&zoom=17');
+  if(addr&&!isUrl(addr))return 'https://waze.com/ul?q='+encodeURIComponent(addr.trim())+(nav?'&navigate=yes':'');
+  if(addr&&isUrl(addr))return addr;
+  return '';
+}
+function wazeFor(c,nav){return wazeLoc(c.coord,c.address,nav);}
+function mapSearch(c){return wazeFor(c,false)||'https://waze.com/ul';}
 function dist(a,b){var R=6371,r=Math.PI/180;var dLat=(b.lat-a.lat)*r,dLng=(b.lng-a.lng)*r;var x=Math.sin(dLat/2)*Math.sin(dLat/2)+Math.cos(a.lat*r)*Math.cos(b.lat*r)*Math.sin(dLng/2)*Math.sin(dLng/2);return 2*R*Math.asin(Math.sqrt(x));}
 var ROAD=1.3;
 function legOf(a,b){var km=dist(a,b)*ROAD;var min=km<0.05?0:Math.round(km/(+state.settings.speed||35)*60)+3;return {km:km,min:min};}
@@ -473,22 +480,24 @@ function optimise(k){
   var saved=(before-r.cost)*ROAD;
   toast(saved>0.2?'Best order found – about '+saved.toFixed(1)+' km shorter.':'This day is already in the most efficient order.');
 }
-function routeLinks(k){
-  var stops=jobsOn(k).map(function(j){return locOf(client(j.clientId));}).filter(Boolean);
-  if(!stops.length)return [];
-  var base=baseLoc(), pts=stops.slice(), hasOrigin=false;
-  if(base){pts.unshift(base);hasOrigin=true;if(state.settings.returnToBase)pts.push(base);}
-  function url(o,w,d){return 'https://www.google.com/maps/dir/?api=1'+(o?'&origin='+encodeURIComponent(o):'')+'&destination='+encodeURIComponent(d)+(w.length?'&waypoints='+w.map(encodeURIComponent).join('%7C'):'')+'&travelmode=driving';}
-  var links=[],i=0,seg;
-  if(!hasOrigin){seg=pts.slice(0,10);links.push(url(null,seg.slice(0,-1),seg[seg.length-1]));i=seg.length-1;}
-  while(i<pts.length-1){seg=pts.slice(i,i+11);links.push(url(seg[0],seg.slice(1,-1),seg[seg.length-1]));i+=seg.length-1;}
-  return links;
+function nextStop(k){
+  var l=jobsOn(k);
+  for(var i=0;i<l.length;i++)if(!l[i].done)return {i:i,c:client(l[i].clientId)};
+  return null;
 }
 function routeButtons(k,cls){
-  var l=routeLinks(k);
-  if(!l.length)return '<button class="btn '+(cls||'')+'" disabled>'+I.map+'Open route in Google Maps</button>';
-  if(l.length===1)return '<a class="btn c '+(cls||'')+'" href="'+esc(l[0])+'" target="_blank" rel="noopener">'+I.map+'Open route in Google Maps</a>';
-  return l.map(function(u,i){return '<a class="btn c '+(cls||'')+'" href="'+esc(u)+'" target="_blank" rel="noopener">'+I.map+'Route part '+(i+1)+' of '+l.length+'</a>';}).join('');
+  cls=cls||'';
+  var l=jobsOn(k),n=nextStop(k),s=state.settings;
+  if(n){
+    var u=wazeFor(n.c,true);
+    if(!u)return '<button class="btn '+cls+'" disabled>'+I.map+'Stop '+(n.i+1)+' has no address for Waze</button>';
+    return '<a class="btn c '+cls+'" href="'+esc(u)+'" target="_blank" rel="noopener">'+I.map+(n.i===0?'Start in Waze':'Next in Waze')+' · '+esc((n.i+1)+'. '+n.c.name)+'</a>';
+  }
+  if(l.length){
+    var b=wazeLoc(s.baseCoord,s.base,true);
+    return b?'<a class="btn c '+cls+'" href="'+esc(b)+'" target="_blank" rel="noopener">'+I.home+'Back to yard in Waze</a>':'<button class="btn '+cls+'" disabled>'+I.check+'All stops done</button>';
+  }
+  return '<button class="btn '+cls+'" disabled>'+I.map+'Navigate with Waze</button>';
 }
 
 /* ---------- views ---------- */
@@ -509,7 +518,7 @@ function viewHome(){
    '</div></div><div class="row"><button class="btn" data-act="open-day" data-k="'+k+'">'+I.cal+'View day</button>'+(n?routeButtons(k):'<button class="btn g" data-act="add-to-day" data-k="'+k+'">'+I.plus+'Add client</button>')+'</div></div>';
   if(MODE==='local')h+='<div class="note" style="margin-top:14px">Not connected to the shared database yet, so everything is saved on this device only.</div>';
   if(!state.clients.length){
-    h+='<div class="card empty" style="margin-top:14px"><h3>Getting started</h3><p>Add your clients, then book them onto days in the calendar. Each day can be put into the shortest driving order and opened in Google Maps.</p><div class="row" style="justify-content:center"><button class="btn g" data-act="new-client">'+I.userplus+'Add first client</button>'+(MODE==='local'?'<button class="btn" data-act="sample">Try with sample clients</button>':'')+'</div></div>';
+    h+='<div class="card empty" style="margin-top:14px"><h3>Getting started</h3><p>Add your clients, then book them onto days in the calendar. Each day can be put into the shortest driving order and navigated with Waze, one stop after the other.</p><div class="row" style="justify-content:center"><button class="btn g" data-act="new-client">'+I.userplus+'Add first client</button>'+(MODE==='local'?'<button class="btn" data-act="sample">Try with sample clients</button>':'')+'</div></div>';
   }else if(!state.settings.baseCoord&&!state.settings.base){
     h+='<div class="note" style="margin-top:14px">Tip: set your yard or depot address in <a href="#" data-act="settings">Settings</a> so each day’s route starts and finishes there.</div>';
   }
@@ -519,7 +528,7 @@ function clientCard(c){
   var booked=0;Object.keys(state.jobs).forEach(function(k){if(k>=todayKey())(state.jobs[k]||[]).forEach(function(j){if(j.clientId===c.id)booked++;});});
   return '<div class="card client"><h3>'+esc(fullName(c))+'</h3>'+
    (c.phone?'<div class="small"><a href="tel:'+esc(String(c.phone).replace(/[^\d+]/g,''))+'">'+esc(c.phone)+'</a></div>':'')+
-   '<div class="small muted" style="word-break:break-word">'+esc(isUrl(c.address)?'Google Maps link':c.address)+'</div>'+
+   '<div class="small muted" style="word-break:break-word">'+esc(isUrl(c.address)?'Map link':c.address)+'</div>'+
    '<div class="meta">'+(c.size?'<span class="pill">'+esc(c.size)+' m²</span>':'')+'<span class="pill clay">'+dur(+c.minutes||0)+'</span>'+(c.coord?'<span class="pill">Map pin ✓</span>':'<span class="pill warn">No map pin</span>')+(booked?'<span class="pill">'+booked+' upcoming</span>':'')+'</div>'+
    (c.description?'<div class="desc">'+esc(c.description)+'</div>':'')+
    '<div class="row" style="margin-top:4px"><button class="btn sm g" data-act="book" data-id="'+c.id+'">'+I.cal+'Book</button><a class="btn sm" href="'+esc(mapSearch(c))+'" target="_blank" rel="noopener">'+I.map+'Map</a><button class="btn sm" data-act="edit-client" data-id="'+c.id+'">'+I.edit+'Edit</button><button class="btn sm ghost danger" data-act="del-client" data-id="'+c.id+'">'+I.trash+'</button></div></div>';
@@ -550,7 +559,7 @@ function viewDay(){
   h+='<div class="summary"><div class="stat"><b>'+p.rows.length+'</b><span>Jobs</span></div><div class="stat"><b>'+dur(p.work)+'</b><span>Work time</span></div><div class="stat"><b>'+(p.km?'~'+p.km.toFixed(1)+' km':'–')+'</b><span>Est. driving'+(p.drive?' · '+dur(p.drive):'')+'</span></div><div class="stat"><b>'+(p.rows.length?hhmm(p.end):'–')+'</b><span>Est. finish (start '+esc(s.startTime)+')</span></div></div>';
   h+='<div class="actions"><button class="btn g" data-act="add-to-day" data-k="'+k+'">'+I.plus+'Add client to this day</button>'+
      '<button class="btn" data-act="optimise" data-k="'+k+'"'+(p.rows.length<2&&!(p.rows.length&&s.baseCoord)?' disabled':'')+'>'+I.spark+'Optimise order</button>'+routeButtons(k)+'</div>';
-  if(p.noPin)h+='<div class="note">'+p.noPin+' stop'+(p.noPin===1?' has':'s have')+' no map pin, so '+(p.noPin===1?'it':'they')+' can’t be placed in the optimised order or timed. Edit the client and add coordinates or a full Google Maps link.</div>';
+  if(p.noPin)h+='<div class="note">'+p.noPin+' stop'+(p.noPin===1?' has':'s have')+' no map pin, so '+(p.noPin===1?'it':'they')+' can’t be placed in the optimised order or timed. Edit the client and use Pick on map.</div>';
   if(!p.rows.length)return h+'<div class="card empty"><h3>No jobs on this day</h3><p>Tap “Add client to this day” to book work in.</p></div>';
   h+='<div class="card"><div class="stops">';
   if(s.baseCoord||s.base)h+='<div class="base"><span class="num">'+I.home.replace('<svg','<svg width="18" height="18"')+'</span><div><b>Leave yard '+esc(s.startTime)+'</b><div class="small">'+esc(isUrl(s.base)?'Yard (map pin)':s.base||'Yard')+'</div></div></div>';
@@ -559,18 +568,18 @@ function viewDay(){
     var c=r.c, tel=String(c.phone||'').replace(/[^\d+]/g,'');
     h+='<div class="stop'+(r.job.done?' done':'')+'"><span class="num">'+(r.job.done?I.check.replace('<svg','<svg width="18" height="18"'):(i+1))+'</span><div class="body">'+
       '<div class="time">'+hhmm(r.arr)+' – '+hhmm(r.dep)+' · '+dur(+c.minutes||0)+'</div><h3>'+esc(fullName(c))+'</h3>'+
-      '<div class="addr">'+esc(isUrl(c.address)?'Google Maps link':c.address)+'</div>'+
+      '<div class="addr">'+esc(isUrl(c.address)?'Map link':c.address)+'</div>'+
       '<div class="meta" style="margin-top:4px">'+(c.size?'<span class="pill">'+esc(c.size)+' m²</span>':'')+(c.coord?'':'<span class="pill warn">No map pin</span>')+'</div>'+
       (c.description?'<div class="desc" style="margin-top:4px">'+esc(c.description)+'</div>':'')+
       '<div class="tools">'+(tel?'<a class="btn sm ghost" href="tel:'+esc(tel)+'">'+I.phone+esc(c.phone)+'</a>':'')+
-      '<a class="btn sm ghost" href="'+esc(mapSearch(c))+'" target="_blank" rel="noopener">'+I.map+'</a>'+
+      '<a class="btn sm ghost" href="'+esc(wazeFor(c,true)||mapSearch(c))+'" target="_blank" rel="noopener">'+I.map+'Waze</a>'+
       '<button class="btn sm ghost" data-act="job-move" data-k="'+k+'" data-i="'+i+'" data-d="-1" aria-label="Move up"'+(i===0?' disabled':'')+'>'+I.up+'</button>'+
       '<button class="btn sm ghost" data-act="job-move" data-k="'+k+'" data-i="'+i+'" data-d="1" aria-label="Move down"'+(i===p.rows.length-1?' disabled':'')+'>'+I.down+'</button>'+
       '<button class="btn sm ghost" data-act="job-done" data-k="'+k+'" data-i="'+i+'">'+I.check+(r.job.done?'Undo':'Done')+'</button>'+
       '<button class="btn sm ghost danger" data-act="job-del" data-k="'+k+'" data-i="'+i+'" aria-label="Remove">'+I.trash+'</button></div></div></div>';
   });
   if(p.back)h+='<div class="leg">'+(p.back.unknown?'Return drive unknown':'~'+p.back.km.toFixed(1)+' km · '+p.back.min+' min back')+'</div><div class="base"><span class="num">'+I.home.replace('<svg','<svg width="18" height="18"')+'</span><div><b>Back at yard ~'+hhmm(p.end)+'</b></div></div>';
-  h+='</div></div><p class="small muted">Drive times here are straight-line estimates. Google Maps shows the exact distance and travel time for the route.</p>';
+  h+='</div></div><p class="small muted">Drive times here are straight-line estimates. Waze shows the live drive time to each stop. Tick a stop Done and the Waze button moves on to the next one.</p>';
   return h;
 }
 function viewWeek(){
@@ -580,7 +589,7 @@ function viewWeek(){
     h+='<div class="wday'+(k===t?' today':'')+'"><div class="wh" data-act="open-day" data-k="'+k+'"><div><b>'+esc(fmt(k,{weekday:'short'}))+'</b><div class="d">'+parseKey(k).getDate()+'</div></div>'+(p?'<span class="small muted">'+dur(p.work)+'</span>':'')+'</div><div class="chips">'+
       js.map(function(j){var c=client(j.clientId);return '<div class="chip'+(j.done?' done':'')+'" data-act="open-day" data-k="'+k+'">'+esc(fullName(c))+'</div>';}).join('')+
       '</div><div class="wf"><button class="addic" data-act="add-to-day" data-k="'+k+'" aria-label="Add client to '+esc(fmt(k,{weekday:'long'}))+'">'+I.plus+'</button>'+
-      (js.length?(function(){var l=routeLinks(k);return l.length?'<a class="addic mapic" href="'+esc(l[0])+'" target="_blank" rel="noopener" aria-label="Open route">'+I.map+'</a>':'';})():'')+'</div></div>';
+      (js.length?(function(){var n=nextStop(k),u=n&&wazeFor(n.c,true);return u?'<a class="addic mapic" href="'+esc(u)+'" target="_blank" rel="noopener" aria-label="Next stop in Waze">'+I.map+'</a>':'';})():'')+'</div></div>';
   }
   return h+'</div>';
 }
@@ -623,38 +632,26 @@ function openModal(html,onMount){
 }
 function closeModal(){if(modalEl){modalEl.remove();modalEl=null;}try{localStorage.removeItem(LSDRAFT);}catch(e){}}
 var LSDRAFT='ldp-draft', pickPending=false;
-function pickUrl(addr,pin){
-  var co=parseCoord(pin)||parseCoord(addr);
-  if(co)return 'https://www.google.com/maps/search/?api=1&query='+co.lat+'%2C'+co.lng;
-  if(addr&&isUrl(addr))return addr;
-  if(addr)return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(addr);
-  return 'https://www.google.com/maps';
-}
 function pinBox(id,val){
   return '<div class="pinbox"><div class="row" style="justify-content:space-between"><b>Map pin</b><span class="small muted">used to plan the best route</span></div>'+
    '<button type="button" class="btn g" id="'+id+'-map" style="margin:10px 0 8px">'+I.map+'Pick on map</button>'+
    '<input id="'+id+'" class="pininput" value="'+esc(val)+'" placeholder="Pin appears here (or paste coordinates)" autocomplete="off">'+
-   '<div id="'+id+'-status" class="small" style="margin-top:8px"></div>'+
-   '<details class="gm"><summary>Or copy a pin from Google Maps</summary>'+
-   '<a class="btn sm" id="'+id+'-pick" href="https://www.google.com/maps" target="_blank" rel="noopener" style="margin:8px 0">'+I.map+'Open Google Maps</a>'+
-   '<ol class="steps small"><li>Press and hold on the garden to drop a pin.</li><li>Tap the coordinates shown to copy them.</li><li>Come back and paste them into the box above.</li></ol></details></div>';
+   '<div id="'+id+'-status" class="small" style="margin-top:8px"></div></div>';
 }
 function wirePin(m,pinId,addrId){
-  var pin=m.querySelector('#'+pinId), addr=m.querySelector('#'+addrId), pick=m.querySelector('#'+pinId+'-pick'), st=m.querySelector('#'+pinId+'-status');
+  var pin=m.querySelector('#'+pinId), addr=m.querySelector('#'+addrId), st=m.querySelector('#'+pinId+'-status');
   function upd(){
-    pick.href=pickUrl(addr.value.trim(),pin.value.trim());
     var raw=pin.value.trim(), co=parseCoord(raw)||parseCoord(addr.value);
     if(co){
       pin.classList.remove('pulse');
-      st.innerHTML='<span class="pill">Pin set ✓ '+co.lat.toFixed(5)+', '+co.lng.toFixed(5)+'</span> <a href="https://www.google.com/maps/search/?api=1&query='+co.lat+'%2C'+co.lng+'" target="_blank" rel="noopener">Check pin</a>';
-    }else if(raw){st.innerHTML='<span class="pill warn">That doesn’t look like coordinates. Copy the numbers shown under the dropped pin.</span>';}
-    else if(/goo\.gl|maps\.app/i.test(addr.value)){st.innerHTML='<span class="pill warn">Short share links don’t include the location. Use Pick on Google Maps.</span>';}
+      st.innerHTML='<span class="pill">Pin set ✓ '+co.lat.toFixed(5)+', '+co.lng.toFixed(5)+'</span> <a href="'+esc(wazeLoc(co,'',false))+'" target="_blank" rel="noopener">Check in Waze</a>';
+    }else if(raw){st.innerHTML='<span class="pill warn">That doesn’t look like coordinates. Use Pick on map, or type them like 53.28943, -6.24461.</span>';}
+    else if(/goo\.gl|maps\.app/i.test(addr.value)){st.innerHTML='<span class="pill warn">Short share links don’t include the location. Use Pick on map.</span>';}
     else st.innerHTML='<span class="pill warn">No pin yet. This stop will still go on the route but can’t be auto-ordered.</span>';
   }
   pin.addEventListener('input',upd);addr.addEventListener('input',upd);
   m.querySelector('#'+pinId+'-map').onclick=function(){openMapPicker(parseCoord(pin.value)||parseCoord(addr.value),addr.value.trim(),function(co){pin.value=co.lat+', '+co.lng;pin.dispatchEvent(new Event('input',{bubbles:true}));toast('Pin set');});};
   pin.addEventListener('paste',function(){setTimeout(function(){var co=parseCoord(pin.value);if(co)pin.value=co.lat+', '+co.lng;upd();},0);});
-  pick.addEventListener('click',function(){pickPending=pinId;});
   upd();
   return upd;
 }
@@ -681,7 +678,7 @@ function clientForm(id,afterSave,draft){
   openModal('<h2>'+(id?'Edit client':'Add new client')+'</h2>'+
    '<div class="two">'+field('f-name','Name *',c.name,{attrs:' autocomplete="given-name"'})+field('f-surname','Surname',c.surname,{attrs:' autocomplete="family-name"'})+'</div>'+
    field('f-phone','Phone number',c.phone,{type:'tel',ph:'e.g. 087 123 4567'})+
-   field('f-address','Google Maps address *',c.address,{ph:'Street address, Eircode, or a Google Maps link'})+
+   field('f-address','Address *',c.address,{ph:'Street address or Eircode'})+
    pinBox('f-pin',pinVal)+
    field('f-desc','Garden description',c.description,{area:1,ph:'Front lawn, hedges along drive, raised beds out back…'})+
    '<div class="two">'+field('f-size','Garden size (m²)',c.size,{type:'number',attrs:' min="0" step="1" inputmode="numeric"'})+field('f-min','Time to complete (minutes) *',c.minutes,{type:'number',attrs:' min="1" step="5" inputmode="numeric"'})+'</div>'+
@@ -712,7 +709,7 @@ function picker(k){
     var booked={};(state.jobs[k]||[]).forEach(function(j){booked[j.clientId]=1;});
     var l=state.clients.filter(function(c){return matches(c,q);}).sort(function(a,b){return fullName(a).localeCompare(fullName(b));});
     if(!state.clients.length)return '<div class="empty">No clients yet.</div>';
-    return l.map(function(c){return '<div class="pick"><div class="body"><b>'+esc(fullName(c))+'</b> <span class="small muted">· '+dur(+c.minutes||0)+'</span><div class="addr">'+esc(isUrl(c.address)?'Google Maps link':c.address)+'</div></div>'+
+    return l.map(function(c){return '<div class="pick"><div class="body"><b>'+esc(fullName(c))+'</b> <span class="small muted">· '+dur(+c.minutes||0)+'</span><div class="addr">'+esc(isUrl(c.address)?'Map link':c.address)+'</div></div>'+
       (booked[c.id]?'<button class="btn sm" data-act="unpick" data-id="'+c.id+'">'+I.check+'Added</button>':'<button class="btn sm g" data-act="pick" data-id="'+c.id+'">'+I.plus+'Add</button>')+'</div>';}).join('')||'<div class="muted small">No clients match.</div>';
   }
   openModal('<h2>Add to '+esc(fmt(k,{weekday:'long',day:'numeric',month:'long'}))+'</h2><input class="search" id="psearch" placeholder="Search clients…"><div id="plist">'+list()+'</div><div class="mfoot"><button class="btn" data-act="pick-new">'+I.userplus+'New client</button><button class="btn g" data-act="close">Done</button></div>',function(m){
@@ -838,19 +835,21 @@ function pdfDay(doc,k){
   var bw=(W-2*PM-24)/4;
   stats.forEach(function(st,i){var x=PM+i*(bw+8);doc.rect(x,y,bw,42,LEAF);doc.text(x+10,y+19,st[0],15,'S',GREEN);doc.text(x+10,y+33,st[1],8,'R',MUTED);});
   y+=56;
-  routeLinks(k).forEach(function(u,i,a){var t='Open route in Google Maps'+(a.length>1?' (part '+(i+1)+' of '+a.length+')':'')+'  >';doc.text(PM,y+9,t,10,'B',GREEN);doc.line(PM,y+11,PM+tw(t,10,'B'),y+11,GREEN,0.6);doc.link(PM,y-2,tw(t,10,'B'),14,u);y+=17;});
+  if(p.rows.length){doc.text(PM,y+9,'Tap “Waze >” next to a stop to navigate there with Waze.',9.5,'R',MUTED);y+=17;}
   y+=6;
   if(!p.rows.length){doc.text(PM,y+14,'No jobs booked for this day.',11,'R',MUTED);return;}
   if(s.baseCoord||s.base){doc.circle(PM+11,y+9,9,[107,138,69]);doc.text(PM+11,y+12.5,'Y',9,'B',WHITE,'center');doc.text(PM+28,y+12.5,'Leave yard '+s.startTime+(s.base&&!isUrl(s.base)?'  ·  '+s.base:''),10,'B',INK);y+=24;}
   var cw=W-2*PM-34-60;
   p.rows.forEach(function(r,i){
-    var c=r.c,desc=wrapText(c.description,9,'R',cw),addr=wrapText(isUrl(c.address)?'Google Maps link':c.address,9.5,'R',cw);
+    var c=r.c,desc=wrapText(c.description,9,'R',cw),addr=wrapText(isUrl(c.address)?'Map link':c.address,9.5,'R',cw);
     var bh=14+17+addr.length*12+13+desc.length*11+12;
     if(y+bh+(r.leg?16:0)>H-50){doc.page(W,H);y=pdfHeader(doc,'Day sheet (continued)',dateTxt);}
     if(r.leg){doc.line(PM+11,y,PM+11,y+12,[107,138,69],1,true);doc.text(PM+28,y+9,r.leg.unknown?'Drive time unknown (no map pin)':'~'+r.leg.km.toFixed(1)+' km · '+r.leg.min+' min drive',8.5,'R',MUTED);y+=16;}
     doc.circle(PM+11,y+11,11,GREEN);doc.text(PM+11,y+15,String(i+1),10,'B',WHITE,'center');
     var x=PM+34,yy=y+9;
-    doc.text(x,yy,hhmm(r.arr)+' – '+hhmm(r.dep)+'   ·   '+dur(+c.minutes||0),9.5,'B',GREEN);yy+=17;
+    doc.text(x,yy,hhmm(r.arr)+' – '+hhmm(r.dep)+'   ·   '+dur(+c.minutes||0),9.5,'B',GREEN);
+    var wz=wazeFor(c,true);if(wz){var lt='Waze >',lw=tw(lt,9.5,'B'),lx=W-PM-30-lw;doc.text(lx,yy,lt,9.5,'B',GREEN);doc.line(lx,yy+2,lx+lw,yy+2,GREEN,0.6);doc.link(lx-2,yy-11,lw+4,15,wz);}
+    yy+=17;
     doc.text(x,yy,fullName(c),13.5,'S',INK);yy+=13;
     addr.forEach(function(l){doc.text(x,yy,l,9.5,'R',MUTED);yy+=12;});
     var meta=[c.phone?'Tel: '+c.phone:'',c.size?c.size+' m²':'',c.coord?'':'No map pin'].filter(Boolean).join('   ·   ');
@@ -862,7 +861,7 @@ function pdfDay(doc,k){
   });
   if(p.back&&y<H-70){doc.line(PM+11,y,PM+11,y+12,[107,138,69],1,true);doc.text(PM+28,y+9,p.back.unknown?'Return drive unknown':'~'+p.back.km.toFixed(1)+' km · '+p.back.min+' min back',8.5,'R',MUTED);y+=16;doc.circle(PM+11,y+9,9,[107,138,69]);doc.text(PM+11,y+12.5,'Y',9,'B',WHITE,'center');doc.text(PM+28,y+12.5,'Back at yard ~'+hhmm(p.end),10,'B',INK);y+=26;}
   if(y<H-120){doc.text(PM,y+14,'Notes',10,'B',GREEN);for(var ly=y+34;ly<Math.min(H-50,y+140);ly+=20)doc.line(PM,ly,W-PM,ly,LINEC,0.5);}
-  doc.text(PM,H-40,'Drive times are straight-line estimates; Google Maps gives exact times.',7.5,'R',LIGHT);
+  doc.text(PM,H-40,'Drive times are straight-line estimates; Waze gives live times.',7.5,'R',LIGHT);
 }
 function pdfWeek(doc,k){
   var W=842,H=595,s0=weekStart(k),e0=addDays(s0,6);
@@ -881,7 +880,7 @@ function pdfWeek(doc,k){
       var r=p.rows[j],c=r.c;
       doc.text(x+7,y,hhmm(r.arr)+'–'+hhmm(r.dep),7.5,'B',GREEN);
       doc.text(x+7,y+11,fit((j+1)+'. '+fullName(c),9,'B',iw),9,'B',INK);
-      doc.text(x+7,y+21,fit(isUrl(c.address)?'Google Maps link':c.address,7.5,'R',iw),7.5,'R',MUTED);
+      doc.text(x+7,y+21,fit(isUrl(c.address)?'Map link':c.address,7.5,'R',iw),7.5,'R',MUTED);
       doc.text(x+7,y+30,fit(dur(+c.minutes||0)+(c.size?' · '+c.size+' m²':'')+(c.phone?' · '+c.phone:''),7.5,'R',iw),7.5,'R',MUTED);
       y+=36;if(j<p.rows.length-1)doc.line(x+7,y-4,x+cw-7,y-4,LINEC,0.4);y+=4;
     }
